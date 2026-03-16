@@ -1,0 +1,19 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Book {
+  id         Int       @id @default(autoincrement())
+  title      String
+  author     String?
+  filename   String    @unique
+  addedAt    DateTime  @default(now())
+  lastReadAt DateTime?
+  lastPage   Int       @default(1)
+  totalPages Int?
+}
