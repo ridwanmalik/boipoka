@@ -3,9 +3,9 @@
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Moon, Sun, SunDim, Home } from "lucide-react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { ChevronLeft, ChevronRight, Home, Maximize2, Minimize2, Moon, Sun, SunDim } from "lucide-react"
 import Link from "next/link"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 // ── Sub-components defined outside to avoid hydration mismatches ──
 
@@ -162,43 +162,48 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
     }
   }, [pdfUrl, bookId])
 
-  const renderPage = useCallback(async (num: number, doc: any) => {
-    if (!doc || !canvasRef.current) return
-    if (renderTaskRef.current) {
-      renderTaskRef.current.cancel()
-      try { await renderTaskRef.current.promise } catch {}
-      renderTaskRef.current = null
-    }
-    setLoading(true)
-    const page = await doc.getPage(num)
-    const natural = page.getViewport({ scale: 1 })
-    const isMobile = window.innerWidth < 768
-    const reservedH = isMobile ? 2 + 64 + 24 : 58 + 40
-    const availW = window.innerWidth * (isMobile ? 0.92 : 0.88)
-    const availH = window.innerHeight - reservedH
-    const dpr = window.devicePixelRatio || 1
-    const cssScale = Math.min(availW / natural.width, availH / natural.height, 2)
-    const scale = cssScale * dpr
-    const viewport = page.getViewport({ scale })
-    const canvas = canvasRef.current
-    // Physical pixels (sharp on retina)
-    canvas.width = viewport.width
-    canvas.height = viewport.height
-    // Logical CSS size (correct layout size)
-    canvas.style.width = `${viewport.width / dpr}px`
-    canvas.style.height = `${viewport.height / dpr}px`
-    const ctx = canvas.getContext("2d")!
-    ctx.fillStyle = "#ffffff"
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    const task = page.render({ canvasContext: ctx, viewport })
-    renderTaskRef.current = task
-    try {
-      await task.promise
-    } catch (e: any) {
-      if (e?.name !== "RenderingCancelledException") console.error(e)
-    }
-    setLoading(false)
-  }, [])
+  const renderPage = useCallback(
+    async (num: number, doc: any) => {
+      if (!doc || !canvasRef.current) return
+      if (renderTaskRef.current) {
+        renderTaskRef.current.cancel()
+        try {
+          await renderTaskRef.current.promise
+        } catch {}
+        renderTaskRef.current = null
+      }
+      setLoading(true)
+      const page = await doc.getPage(num)
+      const natural = page.getViewport({ scale: 1 })
+      const isMobile = window.innerWidth < 768
+      const reservedH = focused ? 0 : isMobile ? 2 + 64 + 24 : 58 + 40
+      const availW = focused ? window.innerWidth : window.innerWidth * (isMobile ? 0.92 : 0.88)
+      const availH = window.innerHeight - reservedH
+      const dpr = window.devicePixelRatio || 1
+      const cssScale = Math.min(availW / natural.width, availH / natural.height, 2)
+      const scale = cssScale * dpr
+      const viewport = page.getViewport({ scale })
+      const canvas = canvasRef.current
+      // Physical pixels (sharp on retina)
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+      // Logical CSS size (correct layout size)
+      canvas.style.width = `${viewport.width / dpr}px`
+      canvas.style.height = `${viewport.height / dpr}px`
+      const ctx = canvas.getContext("2d")!
+      ctx.fillStyle = "#ffffff"
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      const task = page.render({ canvasContext: ctx, viewport })
+      renderTaskRef.current = task
+      try {
+        await task.promise
+      } catch (e: any) {
+        if (e?.name !== "RenderingCancelledException") console.error(e)
+      }
+      setLoading(false)
+    },
+    [focused]
+  )
 
   useEffect(() => {
     if (pdfDoc) renderPage(pageNum, pdfDoc)
@@ -214,12 +219,14 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
 
   // Sync when user exits native fullscreen via Escape
   useEffect(() => {
-    const handler = () => { if (!document.fullscreenElement) setFocused(false) }
-    document.addEventListener('fullscreenchange', handler)
-    document.addEventListener('webkitfullscreenchange', handler)
+    const handler = () => {
+      if (!document.fullscreenElement) setFocused(false)
+    }
+    document.addEventListener("fullscreenchange", handler)
+    document.addEventListener("webkitfullscreenchange", handler)
     return () => {
-      document.removeEventListener('fullscreenchange', handler)
-      document.removeEventListener('webkitfullscreenchange', handler)
+      document.removeEventListener("fullscreenchange", handler)
+      document.removeEventListener("webkitfullscreenchange", handler)
     }
   }, [])
 
@@ -303,24 +310,24 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
       if (dx < 0) goTo(pageNum + 1)
       else goTo(pageNum - 1)
     }
-    el.addEventListener('touchstart', onTouchStart, { passive: true })
-    el.addEventListener('touchmove', onTouchMove, { passive: false })
-    el.addEventListener('touchend', onTouchEnd, { passive: true })
+    el.addEventListener("touchstart", onTouchStart, { passive: true })
+    el.addEventListener("touchmove", onTouchMove, { passive: false })
+    el.addEventListener("touchend", onTouchEnd, { passive: true })
     return () => {
-      el.removeEventListener('touchstart', onTouchStart)
-      el.removeEventListener('touchmove', onTouchMove)
-      el.removeEventListener('touchend', onTouchEnd)
+      el.removeEventListener("touchstart", onTouchStart)
+      el.removeEventListener("touchmove", onTouchMove)
+      el.removeEventListener("touchend", onTouchEnd)
     }
   }, [pageNum, goTo])
 
   // Block iOS webkit gesture events (pinch zoom on the whole page)
   useEffect(() => {
     const prevent = (e: Event) => e.preventDefault()
-    document.addEventListener('gesturestart', prevent)
-    document.addEventListener('gesturechange', prevent)
+    document.addEventListener("gesturestart", prevent)
+    document.addEventListener("gesturechange", prevent)
     return () => {
-      document.removeEventListener('gesturestart', prevent)
-      document.removeEventListener('gesturechange', prevent)
+      document.removeEventListener("gesturestart", prevent)
+      document.removeEventListener("gesturechange", prevent)
     }
   }, [])
 
@@ -341,7 +348,7 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
       <div className="h-svh bg-background flex flex-col overflow-hidden">
         {/* Desktop top bar */}
         <header
-          className={`shrink-0 border-b bg-card/80 backdrop-blur-sm shadow-sm ${cssFallback ? 'hidden' : 'hidden md:block'}`}>
+          className={`shrink-0 border-b bg-card/80 backdrop-blur-sm shadow-sm ${cssFallback ? "hidden" : "hidden md:block"}`}>
           <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-2">
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold truncate leading-none">{title}</p>
@@ -390,21 +397,20 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
           <button
             onClick={toggleFocus}
             className="fixed top-4 right-4 z-50 bg-card/90 backdrop-blur-sm border border-border rounded-full p-2.5 shadow-lg"
-            aria-label="Exit focus mode"
-          >
+            aria-label="Exit focus mode">
             <Minimize2 className="size-5" />
           </button>
         )}
 
         {/* Mobile bottom bar */}
-        <div className={`shrink-0 border-t bg-card/80 backdrop-blur-sm ${cssFallback ? 'hidden' : 'md:hidden'}`}>
+        <div className={`shrink-0 border-t bg-card/80 backdrop-blur-sm ${cssFallback ? "hidden" : "md:hidden"}`}>
           {/* Progress bar sits on top of the bar */}
           <div className="h-0.5 bg-muted">
             <div className="h-full bg-primary transition-all duration-500 ease-out" style={{ width: `${progress}%` }} />
           </div>
           <div className="h-16 px-6 flex items-center justify-between">
             <div className="flex items-center gap-1">
-              <Link href="/" className={buttonVariants({ variant: 'outline', size: 'icon' })}>
+              <Link href="/" className={buttonVariants({ variant: "outline", size: "icon" })}>
                 <Home className="size-4" />
               </Link>
               <DarkToggle mode={colorMode} onCycle={cycleMode} />
