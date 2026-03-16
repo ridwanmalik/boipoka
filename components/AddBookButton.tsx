@@ -2,6 +2,15 @@
 
 import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 export default function AddBookButton() {
   const [open, setOpen] = useState(false);
@@ -34,65 +43,50 @@ export default function AddBookButton() {
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className="bg-white text-neutral-900 text-sm font-semibold px-4 py-2 rounded-lg hover:bg-neutral-200 transition-colors"
-      >
+      <Button onClick={() => setOpen(true)} size="lg">
         + Add Book
-      </button>
+      </Button>
 
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className="bg-neutral-900 border border-neutral-700 rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-semibold text-white">Add Book</h2>
-              <button onClick={() => setOpen(false)} className="text-neutral-500 hover:text-white text-xl leading-none">✕</button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add Book</DialogTitle>
+          </DialogHeader>
+
+          <form ref={formRef} onSubmit={handleSubmit} className="flex flex-col gap-5 mt-1">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="pdf">PDF File</Label>
+              <Input
+                id="pdf"
+                name="pdf"
+                type="file"
+                accept="application/pdf"
+                required
+                className="cursor-pointer"
+              />
             </div>
 
-            <form ref={formRef} onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <div>
-                <label className="block text-sm text-neutral-400 mb-1">PDF File</label>
-                <input
-                  name="pdf"
-                  type="file"
-                  accept="application/pdf"
-                  required
-                  className="w-full text-sm text-neutral-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-neutral-700 file:text-neutral-200 file:cursor-pointer hover:file:bg-neutral-600 file:transition-colors"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-neutral-400 mb-1">Title</label>
-                <input
-                  name="title"
-                  type="text"
-                  required
-                  placeholder="Book title"
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-neutral-400 mb-1">Author <span className="text-neutral-600">(optional)</span></label>
-                <input
-                  name="author"
-                  type="text"
-                  placeholder="Author name"
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-500"
-                />
-              </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="title">Title</Label>
+              <Input id="title" name="title" type="text" required placeholder="Book title" />
+            </div>
 
-              {error && <p className="text-red-400 text-sm">{error}</p>}
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="author">
+                Author{' '}
+                <span className="text-muted-foreground font-normal">(optional)</span>
+              </Label>
+              <Input id="author" name="author" type="text" placeholder="Author name" />
+            </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="bg-white text-neutral-900 font-semibold text-sm py-2 rounded-lg hover:bg-neutral-200 transition-colors disabled:opacity-50 mt-1"
-              >
-                {loading ? 'Uploading…' : 'Add Book'}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
+            {error && <p className="text-destructive text-sm">{error}</p>}
+
+            <Button type="submit" disabled={loading}>
+              {loading ? 'Uploading…' : 'Add Book'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

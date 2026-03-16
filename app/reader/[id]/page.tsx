@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { notFound } from 'next/navigation';
-import PdfViewer from '@/components/PdfViewer';
+import PdfViewer from '@/components/PdfViewerClient';
 
 export default async function ReaderPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

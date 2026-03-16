@@ -1,140 +1,383 @@
-'use client';
+"use client"
 
-import { useEffect, useRef, useState, useCallback } from 'react';
-import Link from 'next/link';
+import { Button } from "@/components/ui/button"
+import { Separator } from "@/components/ui/separator"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Moon, Sun, SunDim } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+
+// ── Sub-components defined outside to avoid hydration mismatches ──
+
+type PageNavProps = {
+  pageNum: number
+  totalPages: number
+  pdfDoc: any
+  pageInput: string
+  setPageInput: (v: string) => void
+  goTo: (n: number) => void
+  onCommit: () => void
+}
+
+function PageNav({ pageNum, totalPages, pdfDoc, pageInput, setPageInput, goTo, onCommit }: PageNavProps) {
+  return (
+    <div className="flex items-center gap-1">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button variant="ghost" size="icon" onClick={() => goTo(pageNum - 1)} disabled={pageNum <= 1 || !pdfDoc} />
+          }>
+          <ChevronLeft className="size-4" />
+        </TooltipTrigger>
+        <TooltipContent>Previous page</TooltipContent>
+      </Tooltip>
+
+      <div className="flex items-center gap-1.5 px-1 text-sm text-muted-foreground tabular-nums">
+        <input
+          className="w-10 text-center bg-muted rounded-md border border-border py-0.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          value={pageInput}
+          onChange={e => setPageInput(e.target.value)}
+          onBlur={onCommit}
+          onKeyDown={e => {
+            if (e.key === "Enter") onCommit()
+          }}
+          disabled={!pdfDoc}
+        />
+        <span>/ {totalPages || "—"}</span>
+      </div>
+
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => goTo(pageNum + 1)}
+              disabled={pageNum >= totalPages || !pdfDoc}
+            />
+          }>
+          <ChevronRight className="size-4" />
+        </TooltipTrigger>
+        <TooltipContent>Next page</TooltipContent>
+      </Tooltip>
+    </div>
+  )
+}
+
+type ColorMode = "light" | "dark" | "shade"
+const nextMode: Record<ColorMode, ColorMode> = { light: "dark", dark: "shade", shade: "light" }
+const modeLabel: Record<ColorMode, string> = { light: "Light", dark: "Dark", shade: "Shade" }
+const ModeIcon = ({ mode }: { mode: ColorMode }) => {
+  if (mode === "dark") return <Moon className="size-4" />
+  if (mode === "shade") return <SunDim className="size-4" />
+  return <Sun className="size-4" />
+}
+
+type DarkToggleProps = { mode: ColorMode; onCycle: () => void }
+
+function DarkToggle({ mode, onCycle }: DarkToggleProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<Button variant="outline" size="icon" onClick={onCycle} aria-label="Cycle colour mode" />}>
+        <ModeIcon mode={mode} />
+      </TooltipTrigger>
+      <TooltipContent>
+        {modeLabel[mode]} — click for {modeLabel[nextMode[mode]]}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+type FocusToggleProps = { focused: boolean; onToggle: () => void }
+
+function FocusToggle({ focused, onToggle }: FocusToggleProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button variant={focused ? "secondary" : "outline"} size="icon" onClick={onToggle} aria-label="Focus mode" />
+        }>
+        {focused ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+      </TooltipTrigger>
+      <TooltipContent>{focused ? "Exit focus mode" : "Focus mode"}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+// ── Main component ──
 
 type Props = {
-  bookId: number;
-  title: string;
-  author: string | null;
-  initialPage: number;
-  pdfUrl: string;
-};
+  bookId: number
+  title: string
+  author: string | null
+  initialPage: number
+  pdfUrl: string
+}
 
 export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [pdfDoc, setPdfDoc] = useState<any>(null);
-  const [pageNum, setPageNum] = useState(initialPage);
-  const [totalPages, setTotalPages] = useState(0);
-  const [dark, setDark] = useState(true);
-  const [loading, setLoading] = useState(true);
-  const renderTaskRef = useRef<any>(null);
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [pdfDoc, setPdfDoc] = useState<any>(null)
+  const [pageNum, setPageNum] = useState(initialPage)
+  const [totalPages, setTotalPages] = useState(0)
+  const [colorMode, setColorMode] = useState<ColorMode>(
+    () => (localStorage.getItem("colorMode") as ColorMode) ?? "shade"
+  )
+  const cycleMode = useCallback(
+    () =>
+      setColorMode(m => {
+        const next = nextMode[m]
+        localStorage.setItem("colorMode", next)
+        return next
+      }),
+    []
+  )
+  const [focused, setFocused] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [pageInput, setPageInput] = useState(String(initialPage))
+  const renderTaskRef = useRef<any>(null)
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Load PDF.js from CDN
   useEffect(() => {
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    const script = document.createElement("script")
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
     script.onload = () => {
-      const pdfjsLib = (window as any).pdfjsLib;
+      const pdfjsLib = (window as any).pdfjsLib
       pdfjsLib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"
       pdfjsLib.getDocument(pdfUrl).promise.then((doc: any) => {
-        setPdfDoc(doc);
-        setTotalPages(doc.numPages);
-        // Save total pages
+        setPdfDoc(doc)
+        setTotalPages(doc.numPages)
         fetch(`/api/books/${bookId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ totalPages: doc.numPages }),
-        });
-      });
-    };
-    document.head.appendChild(script);
-    return () => { document.head.removeChild(script); };
-  }, [pdfUrl, bookId]);
+        })
+      })
+    }
+    document.head.appendChild(script)
+    return () => {
+      document.head.removeChild(script)
+    }
+  }, [pdfUrl, bookId])
 
   const renderPage = useCallback(async (num: number, doc: any) => {
-    if (!doc || !canvasRef.current) return;
+    if (!doc || !canvasRef.current) return
     if (renderTaskRef.current) {
-      renderTaskRef.current.cancel();
+      renderTaskRef.current.cancel()
+      try { await renderTaskRef.current.promise } catch {}
+      renderTaskRef.current = null
     }
-    setLoading(true);
-    const page = await doc.getPage(num);
-    const scale = Math.min(window.innerWidth * 0.9 / page.getViewport({ scale: 1 }).width, 1.8);
-    const viewport = page.getViewport({ scale });
-    const canvas = canvasRef.current;
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const task = page.render({ canvasContext: ctx, viewport });
-    renderTaskRef.current = task;
+    setLoading(true)
+    const page = await doc.getPage(num)
+    const natural = page.getViewport({ scale: 1 })
+    const isMobile = window.innerWidth < 768
+    const reservedH = isMobile ? 2 + 64 + 24 : 58 + 40
+    const availW = window.innerWidth * (isMobile ? 0.92 : 0.88)
+    const availH = window.innerHeight - reservedH
+    const dpr = window.devicePixelRatio || 1
+    const cssScale = Math.min(availW / natural.width, availH / natural.height, 2)
+    const scale = cssScale * dpr
+    const viewport = page.getViewport({ scale })
+    const canvas = canvasRef.current
+    // Physical pixels (sharp on retina)
+    canvas.width = viewport.width
+    canvas.height = viewport.height
+    // Logical CSS size (correct layout size)
+    canvas.style.width = `${viewport.width / dpr}px`
+    canvas.style.height = `${viewport.height / dpr}px`
+    const ctx = canvas.getContext("2d")!
+    ctx.fillStyle = "#ffffff"
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    const task = page.render({ canvasContext: ctx, viewport })
+    renderTaskRef.current = task
     try {
-      await task.promise;
+      await task.promise
     } catch (e: any) {
-      if (e?.name !== 'RenderingCancelledException') console.error(e);
+      if (e?.name !== "RenderingCancelledException") console.error(e)
     }
-    setLoading(false);
-  }, []);
+    setLoading(false)
+  }, [])
 
   useEffect(() => {
-    if (pdfDoc) renderPage(pageNum, pdfDoc);
-  }, [pdfDoc, pageNum, renderPage]);
+    if (pdfDoc) renderPage(pageNum, pdfDoc)
+  }, [pdfDoc, pageNum, renderPage])
 
-  // Auto-save last page
-  const savePage = useCallback((page: number) => {
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = setTimeout(() => {
-      fetch(`/api/books/${bookId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lastPage: page }),
-      });
-    }, 1000);
-  }, [bookId]);
+  useEffect(() => {
+    const handler = () => {
+      if (pdfDoc) renderPage(pageNum, pdfDoc)
+    }
+    window.addEventListener("resize", handler)
+    return () => window.removeEventListener("resize", handler)
+  }, [pdfDoc, pageNum, renderPage])
 
-  const goTo = (n: number) => {
-    if (n < 1 || n > totalPages) return;
-    setPageNum(n);
-    savePage(n);
-  };
+  // Sync if user exits native fullscreen via Escape key
+  useEffect(() => {
+    const handler = () => {
+      if (!document.fullscreenElement) setFocused(false)
+    }
+    document.addEventListener("fullscreenchange", handler)
+    document.addEventListener("webkitfullscreenchange", handler)
+    return () => {
+      document.removeEventListener("fullscreenchange", handler)
+      document.removeEventListener("webkitfullscreenchange", handler)
+    }
+  }, [])
+
+  const toggleFocus = useCallback(() => {
+    setFocused(prev => {
+      const next = !prev
+      try {
+        const el = document.documentElement as any
+        if (next) {
+          ;(el.requestFullscreen ?? el.webkitRequestFullscreen)?.call(el)
+        } else {
+          const exit = (document as any).exitFullscreen ?? (document as any).webkitExitFullscreen
+          exit?.call(document)
+        }
+      } catch {}
+      return next
+    })
+  }, [])
+
+  const savePage = useCallback(
+    (page: number) => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = setTimeout(() => {
+        fetch(`/api/books/${bookId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lastPage: page }),
+        })
+      }, 1000)
+    },
+    [bookId]
+  )
+
+  const goTo = useCallback(
+    (n: number) => {
+      if (n < 1 || n > totalPages) return
+      setPageNum(n)
+      setPageInput(String(n))
+      savePage(n)
+    },
+    [totalPages, savePage]
+  )
+
+  const handlePageInputCommit = useCallback(() => {
+    const n = parseInt(pageInput, 10)
+    if (!isNaN(n)) goTo(n)
+    else setPageInput(String(pageNum))
+  }, [pageInput, pageNum, goTo])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goTo(pageNum + 1);
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') goTo(pageNum - 1);
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [pageNum, totalPages]);
+      if (e.target instanceof HTMLInputElement) return
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") goTo(pageNum + 1)
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") goTo(pageNum - 1)
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [pageNum, goTo])
+
+  // Swipe gesture
+  const mainRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const el = mainRef.current
+    if (!el) return
+    let startX = 0
+    const onTouchStart = (e: TouchEvent) => {
+      startX = e.touches[0].clientX
+    }
+    const onTouchEnd = (e: TouchEvent) => {
+      const dx = e.changedTouches[0].clientX - startX
+      if (Math.abs(dx) < 50) return
+      if (dx < 0) goTo(pageNum + 1)
+      else goTo(pageNum - 1)
+    }
+    el.addEventListener("touchstart", onTouchStart, { passive: true })
+    el.addEventListener("touchend", onTouchEnd, { passive: true })
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart)
+      el.removeEventListener("touchend", onTouchEnd)
+    }
+  }, [pageNum, goTo])
+
+  const progress = totalPages ? Math.round((pageNum / totalPages) * 100) : 0
+
+  const navProps: PageNavProps = {
+    pageNum,
+    totalPages,
+    pdfDoc,
+    pageInput,
+    setPageInput,
+    goTo,
+    onCommit: handlePageInputCommit,
+  }
 
   return (
-    <div className="min-h-screen bg-neutral-950 flex flex-col">
-      <header className="bg-neutral-900 border-b border-neutral-800 px-4 py-3 flex items-center gap-3 sticky top-0 z-10">
-        <Link href="/" className="text-neutral-400 hover:text-white text-sm transition-colors">← Back</Link>
-        <div className="flex-1 min-w-0">
-          <p className="text-white text-sm font-medium truncate">{title}</p>
-          {author && <p className="text-neutral-500 text-xs truncate">{author}</p>}
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => goTo(pageNum - 1)} disabled={pageNum <= 1 || !pdfDoc} className="px-3 py-1.5 bg-neutral-800 rounded-lg text-sm disabled:opacity-30 hover:bg-neutral-700 transition-colors">←</button>
-          <span className="text-neutral-400 text-sm min-w-[70px] text-center">
-            {totalPages ? `${pageNum} / ${totalPages}` : '…'}
-          </span>
-          <button onClick={() => goTo(pageNum + 1)} disabled={pageNum >= totalPages || !pdfDoc} className="px-3 py-1.5 bg-neutral-800 rounded-lg text-sm disabled:opacity-30 hover:bg-neutral-700 transition-colors">→</button>
-          <button
-            onClick={() => setDark(d => !d)}
-            className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${dark ? 'bg-neutral-700 text-green-400' : 'bg-neutral-800 text-neutral-400'}`}
-          >
-            {dark ? '🌙 Dark' : '☀️ Light'}
-          </button>
-        </div>
-      </header>
+    <TooltipProvider delay={400}>
+      <div className="h-svh bg-background flex flex-col overflow-hidden">
+        {/* Desktop top bar */}
+        <header
+          className="hidden md:block shrink-0 border-b bg-card/80 backdrop-blur-sm shadow-sm">
+          <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-2">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold truncate leading-none">{title}</p>
+              {author && <p className="text-xs text-muted-foreground truncate mt-0.5">{author}</p>}
+            </div>
+            <PageNav {...navProps} />
+            <Separator orientation="vertical" className="h-5" />
+            <DarkToggle mode={colorMode} onCycle={cycleMode} />
+            <FocusToggle focused={focused} onToggle={toggleFocus} />
+          </div>
+          <div className="h-0.5 bg-muted">
+            <div className="h-full bg-primary transition-all duration-500 ease-out" style={{ width: `${progress}%` }} />
+          </div>
+        </header>
 
-      <main className="flex-1 flex flex-col items-center py-6 px-2 overflow-auto">
-        {loading && !pdfDoc && (
-          <div className="flex items-center justify-center h-64 text-neutral-500">Loading PDF…</div>
-        )}
-        <canvas
-          ref={canvasRef}
-          className="rounded shadow-2xl max-w-full transition-[filter] duration-200"
-          style={{ filter: dark ? 'invert(1) hue-rotate(180deg)' : 'none' }}
-        />
-      </main>
-    </div>
-  );
+        {/* PDF canvas */}
+        <main
+          ref={mainRef}
+          className={`flex-1 flex flex-col items-center justify-center overflow-hidden ${focused ? "p-0" : "py-4 px-4"}`}>
+          {!pdfDoc && (
+            <div
+              className="rounded-xl shadow-2xl bg-muted animate-pulse flex items-center justify-center text-muted-foreground text-sm"
+              style={{
+                width: "min(88vw, 520px)",
+                aspectRatio: "3 / 4",
+              }}>
+              Loading PDF…
+            </div>
+          )}
+          <canvas
+            ref={canvasRef}
+            className={`max-w-full transition-[filter] duration-200 ${!pdfDoc ? "hidden" : ""} ${focused ? "" : "rounded-xl shadow-2xl"}`}
+            style={{
+              filter:
+                colorMode === "dark"
+                  ? "invert(1) hue-rotate(180deg)"
+                  : colorMode === "shade"
+                    ? "invert(0.76) hue-rotate(180deg)"
+                    : "none",
+            }}
+          />
+        </main>
+
+        {/* Mobile bottom bar */}
+        <div className="md:hidden shrink-0 border-t bg-card/80 backdrop-blur-sm">
+          {/* Progress bar sits on top of the bar */}
+          <div className="h-0.5 bg-muted">
+            <div className="h-full bg-primary transition-all duration-500 ease-out" style={{ width: `${progress}%` }} />
+          </div>
+          <div className="h-16 px-6 flex items-center justify-between">
+            <div className="flex items-center gap-1">
+              <DarkToggle mode={colorMode} onCycle={cycleMode} />
+              <FocusToggle focused={focused} onToggle={toggleFocus} />
+            </div>
+            <PageNav {...navProps} />
+          </div>
+        </div>
+      </div>
+    </TooltipProvider>
+  )
 }
