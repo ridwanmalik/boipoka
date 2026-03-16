@@ -1,10 +1,11 @@
 "use client"
 
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Moon, Sun, SunDim } from "lucide-react"
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Moon, Sun, SunDim, Home } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
+import Link from "next/link"
 
 // ── Sub-components defined outside to avoid hydration mismatches ──
 
@@ -132,6 +133,7 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
     []
   )
   const [focused, setFocused] = useState(false)
+  const [cssFallback, setCssFallback] = useState(false) // true on iOS where native FS fails
   const [loading, setLoading] = useState(true)
   const [pageInput, setPageInput] = useState(String(initialPage))
   const renderTaskRef = useRef<any>(null)
@@ -210,34 +212,37 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
     return () => window.removeEventListener("resize", handler)
   }, [pdfDoc, pageNum, renderPage])
 
-  // Sync if user exits native fullscreen via Escape key
+  // Sync when user exits native fullscreen via Escape
   useEffect(() => {
-    const handler = () => {
-      if (!document.fullscreenElement) setFocused(false)
-    }
-    document.addEventListener("fullscreenchange", handler)
-    document.addEventListener("webkitfullscreenchange", handler)
+    const handler = () => { if (!document.fullscreenElement) setFocused(false) }
+    document.addEventListener('fullscreenchange', handler)
+    document.addEventListener('webkitfullscreenchange', handler)
     return () => {
-      document.removeEventListener("fullscreenchange", handler)
-      document.removeEventListener("webkitfullscreenchange", handler)
+      document.removeEventListener('fullscreenchange', handler)
+      document.removeEventListener('webkitfullscreenchange', handler)
     }
   }, [])
 
-  const toggleFocus = useCallback(() => {
-    setFocused(prev => {
-      const next = !prev
+  const toggleFocus = useCallback(async () => {
+    const next = !focused
+    setFocused(next)
+    if (next) {
       try {
         const el = document.documentElement as any
-        if (next) {
-          ;(el.requestFullscreen ?? el.webkitRequestFullscreen)?.call(el)
-        } else {
-          const exit = (document as any).exitFullscreen ?? (document as any).webkitExitFullscreen
-          exit?.call(document)
-        }
+        await (el.requestFullscreen ?? el.webkitRequestFullscreen)?.call(el)
+        setCssFallback(false) // native fullscreen worked
+      } catch {
+        // iOS / unsupported — hide bars as CSS fallback
+        setCssFallback(true)
+      }
+    } else {
+      setCssFallback(false)
+      try {
+        const exit = (document as any).exitFullscreen ?? (document as any).webkitExitFullscreen
+        await exit?.call(document)
       } catch {}
-      return next
-    })
-  }, [])
+    }
+  }, [focused])
 
   const savePage = useCallback(
     (page: number) => {
@@ -279,14 +284,18 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
     return () => window.removeEventListener("keydown", handler)
   }, [pageNum, goTo])
 
-  // Swipe gesture
+  // Swipe gesture + pinch zoom prevention
   const mainRef = useRef<HTMLElement>(null)
   useEffect(() => {
     const el = mainRef.current
     if (!el) return
     let startX = 0
     const onTouchStart = (e: TouchEvent) => {
-      startX = e.touches[0].clientX
+      if (e.touches.length === 1) startX = e.touches[0].clientX
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      // Block pinch zoom (multi-touch)
+      if (e.touches.length > 1) e.preventDefault()
     }
     const onTouchEnd = (e: TouchEvent) => {
       const dx = e.changedTouches[0].clientX - startX
@@ -294,13 +303,26 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
       if (dx < 0) goTo(pageNum + 1)
       else goTo(pageNum - 1)
     }
-    el.addEventListener("touchstart", onTouchStart, { passive: true })
-    el.addEventListener("touchend", onTouchEnd, { passive: true })
+    el.addEventListener('touchstart', onTouchStart, { passive: true })
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    el.addEventListener('touchend', onTouchEnd, { passive: true })
     return () => {
-      el.removeEventListener("touchstart", onTouchStart)
-      el.removeEventListener("touchend", onTouchEnd)
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('touchend', onTouchEnd)
     }
   }, [pageNum, goTo])
+
+  // Block iOS webkit gesture events (pinch zoom on the whole page)
+  useEffect(() => {
+    const prevent = (e: Event) => e.preventDefault()
+    document.addEventListener('gesturestart', prevent)
+    document.addEventListener('gesturechange', prevent)
+    return () => {
+      document.removeEventListener('gesturestart', prevent)
+      document.removeEventListener('gesturechange', prevent)
+    }
+  }, [])
 
   const progress = totalPages ? Math.round((pageNum / totalPages) * 100) : 0
 
@@ -319,7 +341,7 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
       <div className="h-svh bg-background flex flex-col overflow-hidden">
         {/* Desktop top bar */}
         <header
-          className="hidden md:block shrink-0 border-b bg-card/80 backdrop-blur-sm shadow-sm">
+          className={`shrink-0 border-b bg-card/80 backdrop-blur-sm shadow-sm ${cssFallback ? 'hidden' : 'hidden md:block'}`}>
           <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-2">
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold truncate leading-none">{title}</p>
@@ -363,14 +385,28 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
           />
         </main>
 
+        {/* Floating exit button — shown only in iOS CSS fallback mode */}
+        {cssFallback && (
+          <button
+            onClick={toggleFocus}
+            className="fixed top-4 right-4 z-50 bg-card/90 backdrop-blur-sm border border-border rounded-full p-2.5 shadow-lg"
+            aria-label="Exit focus mode"
+          >
+            <Minimize2 className="size-5" />
+          </button>
+        )}
+
         {/* Mobile bottom bar */}
-        <div className="md:hidden shrink-0 border-t bg-card/80 backdrop-blur-sm">
+        <div className={`shrink-0 border-t bg-card/80 backdrop-blur-sm ${cssFallback ? 'hidden' : 'md:hidden'}`}>
           {/* Progress bar sits on top of the bar */}
           <div className="h-0.5 bg-muted">
             <div className="h-full bg-primary transition-all duration-500 ease-out" style={{ width: `${progress}%` }} />
           </div>
           <div className="h-16 px-6 flex items-center justify-between">
             <div className="flex items-center gap-1">
+              <Link href="/" className={buttonVariants({ variant: 'outline', size: 'icon' })}>
+                <Home className="size-4" />
+              </Link>
               <DarkToggle mode={colorMode} onCycle={cycleMode} />
               <FocusToggle focused={focused} onToggle={toggleFocus} />
             </div>
