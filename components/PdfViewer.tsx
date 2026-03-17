@@ -384,7 +384,7 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
       if (!canvasRef.current) return
       const dist = getDistance(e.touches)
       const ratio = dist / startDist
-      const newZoom = Math.max(0.5, Math.min(4, pinchStartZoom * ratio))
+      const newZoom = Math.max(1, Math.min(4, pinchStartZoom * ratio))
       // Live CSS feedback zooming into the pinch point — no re-render until finger up
       canvasRef.current.style.transformOrigin = `${pinchOriginX}% ${pinchOriginY}%`
       canvasRef.current.style.transform = `scale(${newZoom / zoomRef.current})`
@@ -399,7 +399,7 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
           canvasRef.current.style.transformOrigin = ""
           if (match) {
             const relScale = parseFloat(match[1])
-            const newZoom = Math.max(0.5, Math.min(4, zoomRef.current * relScale))
+            const newZoom = Math.max(1, Math.min(4, zoomRef.current * relScale))
             // Store focal point so renderPage can scroll to it after re-render
             scrollFocusRef.current = { xPct: pinchOriginX / 100, yPct: pinchOriginY / 100 }
             zoomRef.current = newZoom
