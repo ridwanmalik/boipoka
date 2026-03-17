@@ -3,7 +3,7 @@
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { ChevronLeft, ChevronRight, Home, Maximize2, Minimize2, Moon, Sun, SunDim } from "lucide-react"
+import { ChevronLeft, ChevronRight, Home, Maximize2, Minimize2, Moon, Search, Sun, SunDim } from "lucide-react"
 import Link from "next/link"
 import { useCallback, useEffect, useRef, useState } from "react"
 
@@ -105,6 +105,20 @@ function FocusToggle({ focused, onToggle }: FocusToggleProps) {
   )
 }
 
+type ZoomResetProps = { onReset: () => void }
+
+function ZoomReset({ onReset }: ZoomResetProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<Button variant="outline" size="icon" onClick={onReset} aria-label="Reset zoom" />}>
+        <Search className="size-4" />
+      </TooltipTrigger>
+      <TooltipContent>Reset zoom</TooltipContent>
+    </Tooltip>
+  )
+}
+
 // ── Main component ──
 
 type Props = {
@@ -135,9 +149,12 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
   const [focused, setFocused] = useState(false)
   const [cssFallback, setCssFallback] = useState(false) // true on iOS where native FS fails
   const [loading, setLoading] = useState(true)
+  const [zoomScale, setZoomScale] = useState(1)
+  const zoomRef = useRef(1) // tracks live zoom without stale closure issues
   const [pageInput, setPageInput] = useState(String(initialPage))
   const renderTaskRef = useRef<any>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const scrollFocusRef = useRef<{ xPct: number; yPct: number } | null>(null)
 
   useEffect(() => {
     const script = document.createElement("script")
@@ -175,12 +192,13 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
       setLoading(true)
       const page = await doc.getPage(num)
       const natural = page.getViewport({ scale: 1 })
-      const isMobile = window.innerWidth < 768
+      const isMobile = Math.min(window.screen.width, window.screen.height) < 768
       const reservedH = focused ? 0 : isMobile ? 2 + 64 + 24 : 58 + 40
       const availW = focused ? window.innerWidth : window.innerWidth * (isMobile ? 0.92 : 0.88)
       const availH = window.innerHeight - reservedH
       const dpr = window.devicePixelRatio || 1
-      const cssScale = Math.min(availW / natural.width, availH / natural.height, 2)
+      const baseScale = Math.min(availW / natural.width, availH / natural.height)
+      const cssScale = baseScale * zoomRef.current
       const scale = cssScale * dpr
       const viewport = page.getViewport({ scale })
       const canvas = canvasRef.current
@@ -200,10 +218,26 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
       } catch (e: any) {
         if (e?.name !== "RenderingCancelledException") console.error(e)
       }
+      // Scroll so the pinch focal point stays centred after re-render.
+      // Wait one animation frame so the browser has reflowed the new canvas size first.
+      const focus = scrollFocusRef.current
+      if (focus && mainRef.current && canvasRef.current) {
+        const el = mainRef.current
+        const c = canvasRef.current
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        // canvas sits at top-left of a plain overflow-auto container (no flex centering when zoomed)
+        // so offsetLeft == horizontal margin-auto value, offsetTop == container padding-top
+        el.scrollLeft = Math.max(0, c.offsetLeft + c.clientWidth * focus.xPct - el.clientWidth / 2)
+        el.scrollTop = Math.max(0, c.offsetTop + c.clientHeight * focus.yPct - el.clientHeight / 2)
+        scrollFocusRef.current = null
+      }
       setLoading(false)
     },
-    [focused]
+    [focused, zoomScale]
   )
+
+  // Keep zoomRef in sync so renderPage can read the latest value without stale closure
+  useEffect(() => { zoomRef.current = zoomScale }, [zoomScale])
 
   useEffect(() => {
     if (pdfDoc) renderPage(pageNum, pdfDoc)
@@ -281,6 +315,12 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
     else setPageInput(String(pageNum))
   }, [pageInput, pageNum, goTo])
 
+  const resetZoom = useCallback(() => {
+    zoomRef.current = 1
+    scrollFocusRef.current = null
+    setZoomScale(1)
+  }, [])
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return
@@ -291,25 +331,90 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
     return () => window.removeEventListener("keydown", handler)
   }, [pageNum, goTo])
 
-  // Swipe gesture + pinch zoom prevention
+  // Swipe to navigate + pinch to zoom
   const mainRef = useRef<HTMLElement>(null)
   useEffect(() => {
     const el = mainRef.current
     if (!el) return
+
     let startX = 0
+    let startDist = 0
+    let pinchStartZoom = 1
+    let isPinching = false
+    let lastTap = 0
+    let pinchOriginX = 50 // % relative to canvas
+    let pinchOriginY = 50
+
+    const getDistance = (touches: TouchList) =>
+      Math.hypot(
+        touches[0].clientX - touches[1].clientX,
+        touches[0].clientY - touches[1].clientY
+      )
+
     const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 1) startX = e.touches[0].clientX
+      if (e.touches.length === 1) {
+        startX = e.touches[0].clientX
+        isPinching = false
+        // Double-tap to reset zoom
+        const now = Date.now()
+        if (now - lastTap < 300) {
+          zoomRef.current = 1
+          setZoomScale(1)
+          scrollFocusRef.current = null
+        }
+        lastTap = now
+      } else if (e.touches.length === 2) {
+        isPinching = true
+        startDist = getDistance(e.touches)
+        pinchStartZoom = zoomRef.current
+        // Capture pinch midpoint as % of canvas for transform-origin
+        if (canvasRef.current) {
+          const rect = canvasRef.current.getBoundingClientRect()
+          const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2
+          const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+          pinchOriginX = ((midX - rect.left) / rect.width) * 100
+          pinchOriginY = ((midY - rect.top) / rect.height) * 100
+        }
+      }
     }
+
     const onTouchMove = (e: TouchEvent) => {
-      // Block pinch zoom (multi-touch)
-      if (e.touches.length > 1) e.preventDefault()
+      if (e.touches.length < 2) return
+      e.preventDefault()
+      if (!canvasRef.current) return
+      const dist = getDistance(e.touches)
+      const ratio = dist / startDist
+      const newZoom = Math.max(0.5, Math.min(4, pinchStartZoom * ratio))
+      // Live CSS feedback zooming into the pinch point — no re-render until finger up
+      canvasRef.current.style.transformOrigin = `${pinchOriginX}% ${pinchOriginY}%`
+      canvasRef.current.style.transform = `scale(${newZoom / zoomRef.current})`
     }
+
     const onTouchEnd = (e: TouchEvent) => {
-      const dx = e.changedTouches[0].clientX - startX
-      if (Math.abs(dx) < 50) return
-      if (dx < 0) goTo(pageNum + 1)
-      else goTo(pageNum - 1)
+      if (isPinching && e.touches.length < 2) {
+        isPinching = false
+        if (canvasRef.current) {
+          const match = canvasRef.current.style.transform.match(/scale\(([^)]+)\)/)
+          canvasRef.current.style.transform = ""
+          canvasRef.current.style.transformOrigin = ""
+          if (match) {
+            const relScale = parseFloat(match[1])
+            const newZoom = Math.max(0.5, Math.min(4, zoomRef.current * relScale))
+            // Store focal point so renderPage can scroll to it after re-render
+            scrollFocusRef.current = { xPct: pinchOriginX / 100, yPct: pinchOriginY / 100 }
+            zoomRef.current = newZoom
+            setZoomScale(newZoom)
+          }
+        }
+      } else if (!isPinching && zoomRef.current <= 1 && e.changedTouches.length > 0) {
+        const dx = e.changedTouches[0].clientX - startX
+        if (Math.abs(dx) >= 50) {
+          if (dx < 0) goTo(pageNum + 1)
+          else goTo(pageNum - 1)
+        }
+      }
     }
+
     el.addEventListener("touchstart", onTouchStart, { passive: true })
     el.addEventListener("touchmove", onTouchMove, { passive: false })
     el.addEventListener("touchend", onTouchEnd, { passive: true })
@@ -320,7 +425,7 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
     }
   }, [pageNum, goTo])
 
-  // Block iOS webkit gesture events (pinch zoom on the whole page)
+  // Block iOS webkit gesture events (browser-level pinch zoom on the page)
   useEffect(() => {
     const prevent = (e: Event) => e.preventDefault()
     document.addEventListener("gesturestart", prevent)
@@ -367,7 +472,7 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
         {/* PDF canvas */}
         <main
           ref={mainRef}
-          className={`flex-1 flex flex-col items-center justify-center overflow-hidden ${focused ? "p-0" : "py-4 px-4"}`}>
+          className={`flex-1 ${zoomScale > 1 ? "overflow-auto" : "flex flex-col items-center justify-center overflow-hidden"} ${focused ? "p-0" : "py-4 px-4"}`}>
           {!pdfDoc && (
             <div
               className="rounded-xl shadow-2xl bg-muted animate-pulse flex items-center justify-center text-muted-foreground text-sm"
@@ -380,7 +485,7 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
           )}
           <canvas
             ref={canvasRef}
-            className={`max-w-full transition-[filter] duration-200 ${!pdfDoc ? "hidden" : ""} ${focused ? "" : "rounded-xl shadow-2xl"}`}
+            className={`transition-[filter] duration-200 ${zoomScale <= 1 ? "max-w-full" : "block mx-auto"} ${!pdfDoc ? "hidden" : ""} ${focused ? "" : "rounded-xl shadow-2xl"}`}
             style={{
               filter:
                 colorMode === "dark"
@@ -415,6 +520,7 @@ export default function PdfViewer({ bookId, title, author, initialPage, pdfUrl }
               </Link>
               <DarkToggle mode={colorMode} onCycle={cycleMode} />
               <FocusToggle focused={focused} onToggle={toggleFocus} />
+              {zoomScale > 1 && <ZoomReset onReset={resetZoom} />}
             </div>
             <PageNav {...navProps} />
           </div>
